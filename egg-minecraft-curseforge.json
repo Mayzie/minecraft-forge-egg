@@ -1,0 +1,61 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v1",
+        "update_url": null
+    },
+    "exported_at": "2022-02-21T16:58:41+11:00",
+    "name": "CurseForge",
+    "author": "noemail@example.com",
+    "description": "Pulls modpacks from CurseForge.",
+    "features": [
+        "eula",
+        "java_version",
+        "pid_limit"
+    ],
+    "images": [
+        "~java17-openj9:local",
+        "~java17:local",
+        "~java16-openj9:local",
+        "~java16:local",
+        "~java11-openj9:local",
+        "~java11:local",
+        "~java8-openj9:local",
+        "~java8:local"
+    ],
+    "file_denylist": [],
+    "startup": "\/bin\/bash",
+    "config": {
+        "files": "{}",
+        "startup": "{}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!\/bin\/bash\r\nset -e\r\n\r\n# Jessica's completely rewritten CurseForge download script because the included one isn't that great.\r\n# Default: https:\/\/raw.githubusercontent.com\/parkervcp\/eggs\/master\/game_eggs\/minecraft\/java\/forge\/curseforge-generic\/egg-curseforge-generic.json\r\n\r\n# Default directory to store server files.\r\nreadonly FILEPATH=\"\/mnt\/server\"\r\n# CurseForge API URL\r\nreadonly CURSEFORGE_MODPACK=\"https:\/\/addons-ecs.forgesvc.net\/api\/v2\/addon\/%d\"\r\nreadonly CURSEFORGE_FILELIST=\"$CURSEFORGE_MODPACK\/files\"\r\nreadonly CURSEFORGE_DL=\"https:\/\/addons-ecs.forgesvc.net\/api\/v2\/addon\/%d\/file\/%d\/download-url\"\r\n\r\nreadonly GITHUB_API_URL=\"https:\/\/api.github.com\"\r\n\r\n\r\n# Forward all output to a logfile since Pterodactyl doesn't keep it.\r\nexec &>> $FILEPATH\/container-install.log\r\n\r\n\r\n# Modified from: https:\/\/gitlab.com\/bertrand-benoit\/scripts-common\/-\/blob\/9281232036d574d55b761653a36ed5743b25c729\/utilities.sh#L335\r\nhas_command () {\r\n\tlocal _binary=\"$1\" _full_path\r\n\r\n\t# Checks if the binary is available.\r\n\tlocal _full_path=$( command -v \"$_binary\" )\r\n\tlocal commandStatus=$?\r\n\tif [ $commandStatus -ne 0 ]; then\r\n\t\treturn -1\r\n\telse\r\n\t\t# Checks if the binary has \"execute\" permission.\r\n\t\tif [ -x \"$_full_path\" ]; then\r\n\t\t\treturn 0\r\n\t\tfi\r\n\r\n\t\t# It is not the case\r\n\t\treturn -1\r\n\tfi\r\n\r\n\t# Otherwise, simple returns an error code.\r\n\treturn -1\r\n}\r\n\r\ninstall_deps () {\r\n\techo \"# Installing dependencies...\"\r\n\tif has_command apt-get; then\r\n\t\tapt-get update\r\n\t\tapt-get install -y curl jq libarchive-tools wget expect\r\n\telif has_command apx; then\r\n\t\tapx install curl jq libarchive-tools wget expect\r\n\telse\r\n\t\techo \"Unable to install dependencies...\"\r\n\tfi\r\n}\r\n\r\nget_file () {\r\n\tlocal version=$1\r\n\tlocal modpack_id=$2\r\n\r\n\tif [[ $version == \"latest\" ]]; then\r\n\t\t# Retrieve latest file.\r\n\t\tlocal url=$(printf $CURSEFORGE_MODPACK $modpack_id)\r\n\t\tlocal json=$(curl -sSL $url)\r\n\r\n\t\tlocal server_pack_id=$(echo -e $json | jq -r \".latestFiles | sort_by(.fileDate) | last | .serverPackFileId\")\r\n\r\n\t\tif [ -z $server_pack_id ]; then\r\n\t\t\treturn -1;\r\n\t\tfi\r\n\r\n\t\tlocal download_url=$(curl -sSL $(printf $CURSEFORGE_DL $modpack_id $server_pack_id))\r\n\r\n\t\techo $download_url\r\n\r\n\t\treturn 0\r\n\telif [[ -n $version ]]; then\r\n\t\t# Version number specified.\r\n\t\tlocal url=$(printf $CURSEFORGE_FILELIST $modpack_id)\r\n\t\tlocal json=$(curl -sSL $url)\r\n\r\n\t\tlocal server_pack_id=$(echo -e $json | jq -r \". |= sort_by(.fileDate) | map(select(.displayName | contains(\\\"$version\\\"))) | last | .serverPackFileId\")\r\n\r\n\t\tif [[ $server_pack_id == \"null\" ]] || [ -z $server_pack_id ]; then\r\n\t\t\treturn -1\r\n\t\tfi\r\n\r\n\t\tlocal download_url=$(curl -sSL $(printf $CURSEFORGE_DL $modpack_id $server_pack_id))\r\n\r\n\t\techo $download_url\r\n\r\n\t\treturn 0\r\n\telif [[ -z $version ]]; then\r\n\t\t# Prompt for download URL.\r\n\t\techo \"# No modpack version specified...\" >> $FILEPATH\/container-install.log\r\n\r\n\t\treturn -1\r\n\tfi\r\n\r\n\treturn -1\r\n}\r\n\r\ndownload_file () {\r\n\tlocal download_url=$1\r\n\tlocal dir=$2\r\n\r\n\tlocal file=\"$dir\"\"server.zip\"\r\n\r\n\tcurl -o $file -L $download_url\r\n\r\n\tlocal top_level_dir=$(bsdtar -tf $file | egrep -o '(^[^\\\/]+\\\/)|(^[^\\\/]+$)' | uniq | wc -l)\r\n\r\n    # Corner case exists here where if there's only one file in the ZIP, can't be bothered to fix it right now because\r\n    # I don't think it's going to be an issue.\r\n\tif [ $top_level_dir -eq 1 ]; then\r\n\t\tbsdtar --strip-components=1 --directory $dir -xvf $file\r\n\telse\r\n\t\tbsdtar --directory $dir -xvf $file\r\n\tfi\r\n\r\n\trm -f $file\r\n}\r\n\r\nmain () {\r\n\tlocal server_dir=$FILEPATH\r\n\t# Make sure the path has a trailing \/\r\n\t[[ \"$server_dir\" != *\/ ]] && server_dir=\"${server_dir}\/\"\r\n\r\n\techo \"Checking if '$server_dir' exists and creating it if necessary.\"\r\n\tif [ ! -d $server_dir ]; then\r\n\t\tset +e\r\n\r\n\t\tmkdir -p $server_dir &> \/dev\/null\r\n\t\tif [[ $? -ne 0 ]]; then\r\n\t\t\techo \"Error: Unable to create '$server_dir'.\"\r\n\r\n\t\t\texit -1\r\n\t\tfi\r\n\r\n\t\tset -e\r\n\tfi\r\n\r\n\tinstall_deps\r\n\r\n\tlocal download_url=$(get_file $MODPACK_VERSION $MODPACK_ID)\r\n\r\n\techo \"# File URL: $download_url\"\r\n\r\n\tif [ -z $download_url ]; then\r\n\t\techo \"Unable to find server download URL.\"\r\n\r\n\t\texit -1\r\n\tfi\r\n\r\n\tdownload_file $download_url $server_dir\r\n\r\n\techo \"Installation complete\"\r\n}\r\n\r\nmain",
+            "container": "debian:bullseye-slim",
+            "entrypoint": "\/bin\/bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Modpack Project ID",
+            "description": "The modpack project ID from the CurseForge site on the pack page.\r\n\r\n(Ex. https:\/\/www.curseforge.com\/minecraft\/modpacks\/bofa-mods ID is 375152)",
+            "env_variable": "MODPACK_ID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string"
+        },
+        {
+            "name": "Modpack Version",
+            "description": "Version of the modpack to use.",
+            "env_variable": "MODPACK_VERSION",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20"
+        }
+    ]
+}
